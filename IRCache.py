@@ -8,8 +8,8 @@
 # IRcsv.marge_stock_code() #銘柄コードの追加
 # IRcsv.copy_past_next_announcement_codes() #次回決算発表日が過去のもの抽出
 
-CSV_COLNAME = ["コード", "銘柄名", "IRBANKコード","決算発表日","次回決算発表日"] #各列名
-CSVCN1, CSVCN2, CSVCN3, CSVCN4, CSVCN5 = 0,1,2,3,4
+CSV_COLNAME = ["コード", "銘柄名", "IRBANKコード","決算発表日","次回決算発表日","配当CAGR"] #各列名
+CSVCN1, CSVCN2, CSVCN3, CSVCN4, CSVCN5, CSVCN6 = range(len(CSV_COLNAME))
 # JPX トップページ マーケット情報 統計情報（株式関連） その他統計資料 東証上場銘柄一覧
 # 東証上場銘柄一覧 https://www.jpx.co.jp/markets/statistics-equities/misc/01.html
 # から "コード" と "銘柄名" の列だけ残して IRCODE.csv として保存すれば使用可能

@@ -1,19 +1,25 @@
 
-import IRpwBB4
+import IRpwBB5
 import pandas as pd             # py -m pip install pandas
 
 
 #############################################################################################
-def makeCFYield(dfCF, dfV):     #CF推移と価値算定を受けて、CF利回り一覧を返す
+def makeCFYield(dfCF, dfV, dfD):     #CF推移と価値算定を受けて、CF利回り一覧を返す
     if dfCF.empty or dfV.empty:
         return pd.DataFrame()
     
     df = dfCF[['単位', '営業CF']].join(dfV[['時価総額']], how='outer') #欠損も残す
-    df = df.replace('-', pd.NA).dropna()    # '-' や NaN を含む行を削除
+    #df = df.replace('-', pd.NA).dropna()    # '-' や NaN を含む行を削除
 
     # 数値化（営業CFはカンマ除去 → int）百万円単位
-    df['営業CF'] = df['営業CF'].str.replace(',', '').astype(int) * df['単位'].astype(int)
+    #df['営業CF'] = df['営業CF'].str.replace(',', '').astype(int) * df['単位'].astype(int)
+    df["営業CF"] = (
+        pd.to_numeric(df["営業CF"].str.replace(",", ""), errors="coerce")
+        * pd.to_numeric(df["単位"], errors="coerce")
+    )
+    # 時価総額データなし 8698 マネックスグループ 8473 ＳＢＩホールディングス 366A
 
+    
     # 時価総額を百万円単位で数値化（兆・億に対応）
     def parse_marketcap(x):
         if isinstance(x, str):
@@ -38,10 +44,15 @@ def makeCFYield(dfCF, dfV):     #CF推移と価値算定を受けて、CF利回�
             print(f"(makeCFYield){x}", type(x))
             return pd.NA
 
-    df['時価総額'] = df['時価総額'].apply(parse_marketcap).astype(float)
+    #df['時価総額'] = df['時価総額'].apply(parse_marketcap).astype(float)
+    df['時価総額'] = pd.to_numeric(df['時価総額'].apply(parse_marketcap), errors="coerce")
+        
     df['CF利回り'] = df['営業CF'] / df['時価総額'] #CF利回り（営業CF ÷ 時価総額）
     df.drop(columns=['単位'], inplace=True)       #単位列を削除
-    return df
+
+    if "配当利回り" in dfD.columns:
+        df = df.join( dfD[['配当利回り']], how='outer')
+    return df.tail(15)
 
 #############################################################################################
 # 実行 (テストドライバ)
@@ -52,7 +63,11 @@ if __name__ == "__main__":
     import pythoncom    #pythoncom.PumpWaitingMessages()
 
     import win32com.client as win32
+
     win32.gencache.EnsureDispatch("Excel.Application")  # 型ライブラリをロード
+    # AttributeError: module 'win32com.gen_py.00020813-0000-0000-C000-000000000046x0x1x8'
+    # has no attribute 'CLSIDToClassMap'
+    # ⇒ キャッシュ破損: %LOCALAPPDATA%\Temp\gen_py フォルダを削除
     from win32com.client import constants   # xlRight
     
     excel = win32.Dispatch("Excel.Application")
@@ -71,9 +86,9 @@ if __name__ == "__main__":
         shp.Top = shp.Top + 5
     
 
-    with IRpwBB4.IRBankBrowser() as irBB:
+    with IRpwBB5.IRBankBrowser() as irBB:
 
-        irBB.ref_list = ["value", "cf", "per"] # 並行読み込み
+        irBB.ref_list = ["cf", "value", "dividend", "per"] # 並行読み込み
         
         cActv = excel.ActiveCell
         while cActv.Text:
@@ -95,18 +110,19 @@ if __name__ == "__main__":
 
             # URLの貼り付け
             cActv.Offset( adj1, adj2 + 1).Value = irBB.stock_name
-            urls = ((irBB.url_cf, 2), (irBB.url_value, 6),
+            urls = ((irBB.url_cf, 2), (irBB.url_dividend, 5), (irBB.url_value, 3),
                     (irBB.url_per, 8), (irBB.url_pl, 11))
-            for url in urls:
-                cActv.Offset( adj1, adj2 + url[1]).Value = url[0]
+            for url,col in urls:
+                cActv.Offset( adj1, adj2 + col).Value = url
             pythoncom.PumpWaitingMessages()     #DoEvents
             time.sleep(0.001)
 
             # CF利回り一覧表の貼り付け
             dfCF = irBB.read_cf_table()           # CF推移テーブル(/cf)を取得
             dfV  = irBB.read_value_table()        # 価値算定テーブル(/value)読込
+            dfD  = irBB.read_dividend_table()     # 配当金の推移テーブル(/dividend)読込
         
-            df = makeCFYield( dfCF, dfV )
+            df = makeCFYield( dfCF, dfV, dfD )
             tsv = df.to_csv(sep="\t")
             # 改行コードを強制的に \n に統一
             tsv = tsv.replace("\r\n", "\n").replace("\r", "\n")
@@ -115,7 +131,7 @@ if __name__ == "__main__":
 
             row = cActv.Row              # アクティブセルの行番号を取得
             i = df.shape[0] + 3         # dfの行数 + 3 (タイトル1行、余白2行)
-            i = 11 if i < 11 else i
+            i = 19 if i < 19 else i     # 19行挿入
             ws.Rows(f"{row+1}:{row+i}").Insert()    # 下に i行挿入
         
             ws.Paste(Destination=cActv.Offset( adj1 + 1, adj2 + 1))
@@ -128,34 +144,37 @@ if __name__ == "__main__":
             cActv.Offset( adj1 + 1, adj2).Value = irBB.next_announcement
             cActv.Offset( adj1 + 1, adj2).NumberFormat = "M/D"
             cActv.Offset( adj1 + 2, adj2).Value = irBB.announcement
+            # 配当金CAGRの貼り付け
+            cActv.Offset( adj1 + 3, adj2).Value = irBB.Dividend_CAGR
+            cActv.Offset( adj1 + 3, adj2).NumberFormat = "0.00%" 
             pythoncom.PumpWaitingMessages()     #DoEvents
             time.sleep(0.001)
 
             # URLにハイパーリンクを付ける
-            for url in urls:
-                cActv.Offset( adj1, adj2 + url[1]).HorizontalAlignment = constants.xlRight
-                ws.Hyperlinks.Add(Anchor=cActv.Offset( adj1, adj2 + url[1]),
-                                  Address=url[0])
+            for url,col in urls:
+                cActv.Offset( adj1, adj2 + col).HorizontalAlignment = constants.xlRight
+                ws.Hyperlinks.Add(Anchor=cActv.Offset( adj1, adj2 + col),
+                                  Address=url)
 
             irBB.load_pl_page()         # 会社業績ページ(/pl)読込
             if irBB.copy_net_income_graph():    # 当期純利益グラフ（SVG #2）
                 PasteGraph(1, 10)
         
             if irBB.copy_sales_graph():     # 売上高グラフ（SVG #0）
-                PasteGraph(1, 8)
+                PasteGraph(10, 8)
             pythoncom.PumpWaitingMessages()     #DoEvents
             time.sleep(0.001)
 
             irBB.load_per_page()        # PER推移ページ(/per)読込
             if irBB.copy_per_graph():       # PERグラフ
-                PasteGraph(1, 5)
+                PasteGraph(1, 6)
             pythoncom.PumpWaitingMessages()     #DoEvents
             time.sleep(0.001)
 
             cNext.Select()
             cActv = excel.ActiveCell
 
-            for i in range(10):
+            for i in range(30):
                 print("-", end="")
                 pythoncom.PumpWaitingMessages()     #DoEvents
                 time.sleep(0.1)
