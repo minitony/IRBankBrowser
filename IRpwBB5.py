@@ -1,5 +1,6 @@
 
 # import IRpwBB5        (キャッシュ処理インポート版)
+DELAY30 = 30        # 次回決算発表日、取得失敗のとき 30日後に設定
 #
 # irBB = IRpwBB2.IRBankBrowser()
 # irBB.start()      #初期化 (playwriteブラウザ起動)
@@ -39,7 +40,7 @@ import time
 import re
 import numpy as np
 import pandas as pd                     # py -m pip install pandas
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 
 #########################################################################
@@ -71,6 +72,7 @@ class IRBankBrowser:
         
         self.playwright = None
         self.browser = None
+        self.context = None
         self.page = {}          # self._urlに対応する各page
         self.svgs = None        # 処理中tagのlocatorの値
 
@@ -94,15 +96,16 @@ class IRBankBrowser:
     def start(self):
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=True)
+        self.context = self.browser.new_context()
         print("(start)ブラウザ起動完了")
         
     def cleanup(self):
+        print("\n(cleanup)終了処理")
         self.csv.update_row()   # CSV 保存
         self.cache.save()       # json保存
-        for key in self.page.keys():
-            self.page[key].close()
+
         if self.browser:
-            self.browser.close()
+            self.browser.close()    #contextもpaseもcloseされる
         if self.playwright:
             self.playwright.stop()
         print("(cleanup)ブラウザを閉じました")
@@ -114,9 +117,9 @@ class IRBankBrowser:
     @stock_code.setter
     def stock_code(self, value):    # 銘柄コード設定
 
-        if self._cache_cleared:     # 前回キャッシュクリアされた(Web読込した)
-            self.csv.update_row()# CSV保存
-            self.cache.save()    # json保存
+        #if self._cache_cleared:     # 前回キャッシュクリアされた(Web読込した)
+        #    self.csv.update_row()# CSV保存
+        #    self.cache.save()    # json保存
 
         self._stock_code = value    # 銘柄コード
         
@@ -129,17 +132,14 @@ class IRBankBrowser:
             # csv.stock_codeは csv側でNoneを設定、cache.stock_codeはそのまま
             return
         else:
-            print(f"銘柄コード: {value}")
+            print(f"銘柄コード: {value}", end="")
 
-        for key, page in self.page.items(): #開いているページを閉じる
-            if page:
-                try:
-                    page.close()
-                except:
-                    pass
+        self.context.close()    #自動的に全pageがclose()される
         self.page = {}
+        self.context = self.browser.new_context()
         
         self._stock_name = self.csv.row[ CSV_COLNAME[ CSVCN2 ] ] # 銘柄名
+        print(f"  銘柄名: {self._stock_name}")
         
         # URL 設定 #1
         # top:株式情報ページ (ir_code取得目的)
@@ -168,10 +168,10 @@ class IRBankBrowser:
         if self._cache_cleared:
             # IRBANKコードが変っていることがある。
             # 頻度が少ないので更新時限定で見直しする。
-            # 手動更新するときは IRCODE.csvをメモ帳で編集して直近決算発表日時を過去にする
+            # 手動更新するときは IRCODE.csvをメモ帳で編集して直近決算発表日を空欄にする
             ir2 = self.get_ir_code()    #topから読む
             if ir2 and ir != ir2:
-                print(f"新しいIRBANKコード: {ir2}")
+                print(f"新しいIRBANKコード: {ir2}\n")
                 ir = ir2
                 self.csv.set(CSV_COLNAME[CSVCN3], ir)   #登録更新
                 self.cache.clear()      #キャッシュクリア
@@ -286,7 +286,7 @@ class IRBankBrowser:
         if self.page.get(key):  #すでに開いていたら、開いているものを使う
             return
         # ページを開く
-        page = self.browser.new_page()
+        page = self.context.new_page()
         response = page.goto(self._url[key]) #, wait_until="domcontentloaded")
     # response is None: DNSエラー、response.status >= 400: HTTPエラー
         self.page[key] = page
@@ -373,10 +373,12 @@ class IRBankBrowser:
             print(f"新規取得 ", end="")
             next_dt = self.get_next_announcement_date() #Web(top)から取得 (次回決算発表日)
             if not next_dt:                         #取得できない
-                print(f"取得失敗(1)")
+                # 情報再取得日を30日後に設定
+                next_dt = (date.today() + timedelta(days=DELAY30)).strftime("%Y-%m-%d")
+                print(f"取得失敗(1) 次回決算情報取得日(30日後) {next_dt}")
             else:
                 print(f"{next_dt}")
-                self.csv.set(CSV_COLNAME[CSVCN5], next_dt)  #キャッシュ保存 (次回決算発表日)
+            self.csv.set(CSV_COLNAME[CSVCN5], next_dt)  #キャッシュ保存 (次回決算発表日)
         else:
             print("")
             next_dt = None  #Webから未取得
@@ -427,12 +429,13 @@ class IRBankBrowser:
         key = "html"
         if self.page.get(key):
             self.page[key].close()        
-        self.page[key] = self.browser.new_page()
+        self.page[key] = self.context.new_page()
 
         html = f"<html><body>{html}</body></html>"""
         print("(set_page)Cacheページ読込")
-        self.page[key].set_content(html)
-
+        self.page[key].set_content(html) #, wait_until="domcontentloaded")
+        #if tag == "svg":   うまくいかない
+        #    self.page[key].wait_for_selector("svg path", timeout=30000) #描画待ち
         self.svgs = self.page[key].locator(tag)
         self.svgs.first.wait_for()
 
@@ -513,11 +516,12 @@ class IRBankBrowser:
         self.load_svgs( "pl", "svg", '[aria-label="グラフ。"]' )
 
     def copy_sales_graph(self, n="売上高"):    # 売上高グラフ（SVG #0）
-        return self.copy_graph_specified("売上高", ["売上高", "包括利益", "営業収益"] )
-        # "売上高"がないものもある ex) 4597, 8393
+        return self.copy_graph_specified("売上高", ["売上高", "包括利益", "営業収益", "事業収益"] )
+        # "売上高"がないものもある ex) 4597, 8393 事業収益 4889 4598
 
     def copy_net_income_graph(self):        # 利益率グラフ（SVG #1 or #2）
         return self.copy_graph_specified("利益率", ["税引前利益"] )
+        #2026/08/01利益率グラフなし 416A 463A
 
     ##########################################################################################
     def load_per_page(self):    # PER推移ページ(/per)読込
@@ -596,12 +600,20 @@ class IRBankBrowser:
             full_row_index = i + (rowspan - 1)
             if full_row_index >= n:
                 break
-            full_tr = trs.nth(full_row_index)
-            full_tds = full_tr.locator("td")
 
-            # 最終四半期のデータ（四半期列を含む）
-            row = [full_tds.nth(j).inner_text().split("\n")[0].strip() for j in range(full_tds.count())]
-                
+            while True:
+                full_tr = trs.nth(full_row_index)
+                full_tds = full_tr.locator("td")
+
+                # 最終四半期のデータ（四半期列を含む）
+                row = [full_tds.nth(j).inner_text().split("\n")[0].strip() for j in range(full_tds.count())]
+                if "".join(row).replace("-", "") in ["実績"]:   #データがない
+                    full_row_index = full_row_index - 1     # ひとつ前の行(予想行)を読む
+                    rowspan = rowspan - 1       # 年度の一行目まで戻ったら「年度」列を削除するため
+                    continue
+                break
+            
+            
             # 1行しかない時は row[0]に「年度」列データがあるので削除
             if rowspan == 1:
                 row.pop(0)
@@ -645,15 +657,30 @@ class IRBankBrowser:
         col = "分割調整"    # 分割調整がなければ合計の値を使う
         col = col if col in df.columns else "合計"
 
-        df[col] = df[col].str.replace(",", "")        #念のため
+        df[col] = df[col].str.replace(",", "").str.split('#').str[0]    # ,を取る。#以降を削除
         df[col] = pd.to_numeric(df[col], errors="coerce") #数値化
-        df["max"] = df[col].expanding().max().shift(1)  #それまでの最大配当金
-        df["増配比率"] = df[col] / df["max"] - 1        #最大配当金からの増減率
-        df["増配比率"] = df["増配比率"].replace([np.inf, -np.inf], 1)
+        df["max"] = df[col].expanding().max().shift(1).fillna(0)        #それまでの最大配当金
+        #df["max"] = df["max"].fillna(0)                 #一つ目のデータ NaNを 0 にする
+        
+        df["増配比率"] = (df[col] / df["max"] - 1).fillna(0)            #最大配当金からの増減率
+        #注) 未配当(0 / 0 = NaN)のとき 0、無配転落は -1
+        
+        #df["増配比率"] = df["増配比率"].replace([np.inf, -np.inf], 1)
+        df["div"] = ( pd.to_numeric(    #配当利回りの数値化 ("-"のとき 0)
+                    df["配当利回り"].str.replace("%", "").str.replace("-", "0"), errors="coerce"
+                    ).fillna(0) / 100 )
+        df.loc[np.isinf(df["増配比率"]), "増配比率"] = pd.to_numeric(df["div"], errors="coerce")
+        #注) 初配当の増配比率は infになっている。1だと大きいので配当利回りに置き換える。
+        
         rows, cols = df.shape
-        rows = rows - 1 if rows < 11 else 10    #最大10年の平均値
-        Dividend_CAGR = df["増配比率"].tail(rows).sum() / rows
-        self.csv.set(CSV_COLNAME[CSVCN6], Dividend_CAGR)  #キャッシュ保存 (配当CAGR)
+        #rows = rows - 1     #差分(増配比率)を取るためデータ数は 1減る ⇒ 初年度は配当利回りを採用
+        if rows > 0:
+            rows = rows if rows < 10 else 10        #最大10年の平均値
+            cagr10 =  df["増配比率"].tail(rows).sum() / rows
+            rows = rows if rows < 5 else 5          #最大5年の平均値
+            cagr5  = df["増配比率"].tail(rows).sum() / rows
+            Dividend_CAGR = cagr5 if abs(cagr5) < abs(cagr10) else cagr10   #絶対値の小さいほう
+            self.csv.set(CSV_COLNAME[CSVCN6], Dividend_CAGR)  #キャッシュ保存 (配当CAGR)
         return df
 
 #############################################################################################
