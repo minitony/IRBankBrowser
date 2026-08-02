@@ -92,6 +92,8 @@ class IRBankBrowser:
     def __exit__(self, exc_type, exc, tb):
         if exc_type is None:
             pass    # 正常終了
+        elif exc_type is KeyboardInterrupt: 
+            pass    # Ctrl+C
         else:
             print("\n\n例外発生:", exc_type, exc)        
             self.csv.set(CSV_COLNAME[CSVCN4], "")   # 決算発表日
@@ -381,7 +383,7 @@ class IRBankBrowser:
             if not next_dt:                         #取得できない
                 # 情報再取得日を30日後に設定
                 next_dt = (date.today() + timedelta(days=DELAY30)).strftime("%Y-%m-%d")
-                print(f"取得失敗(1) 次回決算情報取得日(30日後) {next_dt}")
+                print(f"取得失敗 次回決算情報取得日(30日後) {next_dt}")
             else:
                 print(f"{next_dt}")
             self.csv.set(CSV_COLNAME[CSVCN5], next_dt)  #キャッシュ保存 (次回決算発表日)
@@ -439,9 +441,9 @@ class IRBankBrowser:
 
         html = f"<html><body>{html}</body></html>"""
         print("(set_page)Cacheページ読込")
+        if tag == "svg":    #外部URLを内部IDのみに書き換え
+            html = re.sub(r'clip-path="url\(https://[^#]+#', 'clip-path="url(#', html)
         self.page[key].set_content(html) #, wait_until="domcontentloaded")
-        #if tag == "svg":   うまくいかない
-        #    self.page[key].wait_for_selector("svg path", timeout=30000) #描画待ち
         self.svgs = self.page[key].locator(tag)
         self.svgs.first.wait_for()
 
