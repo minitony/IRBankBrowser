@@ -90,6 +90,12 @@ class IRBankBrowser:
         self.start()
         return self
     def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            pass    # 正常終了
+        else:
+            print("\n\n例外発生:", exc_type, exc)        
+            self.csv.set(CSV_COLNAME[CSVCN4], "")   # 決算発表日
+            self.csv.set(CSV_COLNAME[CSVCN5], "")   # 次回決算発表日
         self.cleanup()
 
     # --- with なし用 ---
