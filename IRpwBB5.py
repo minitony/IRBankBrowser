@@ -1,7 +1,9 @@
 
 # import IRpwBB5        (キャッシュ処理インポート版)
 DELAY30 = 30        # 次回決算発表日、取得失敗のとき 30日後に設定
-bheadless = False   # True:ブラウザ非表示 False:表示
+bheadless = True    # True:ブラウザ非表示 False:表示
+intopensleep = 0    # 待ち時間 (Webアクセス毎)
+bRetry500 = True    # True: 500番台のエラーなら60秒待って再接続
 #
 # irBB = IRpwBB2.IRBankBrowser()
 # irBB.start()      #初期化 (playwriteブラウザ起動)
@@ -305,13 +307,22 @@ class IRBankBrowser:
             return
         # ページを開く
         page = self.context.new_page()
-        page.set_default_timeout(60000)
-        response = page.goto(self._url[key], wait_until="domcontentloaded")
-        time.sleep(1)
-        if response is None:
-            raise Exception("レスポンスなし（ネットワーク遮断 or 504 相当）")
-        elif response.status >= 400:
-            raise Exception(f"エラー{response.status} {response.url}")
+        page.set_default_timeout(300000)
+        while True:
+            response = page.goto(self._url[key], wait_until="domcontentloaded")
+            time.sleep(intopensleep)
+            if response is None:
+                raise Exception("レスポンスなし（ネットワーク遮断 or 504 相当）")
+            elif response.status >= 500:
+                if bRetry500:
+                    print(f"エラー{response.status} {response.url} (60秒後に再接続)")
+                    time.sleep(60)
+                else:
+                    raise Exception(f"エラー{response.status} {response.url}")
+            elif response.status >= 400:
+                raise Exception(f"エラー{response.status} {response.url}")
+            else:
+                break
     # response is None: DNSエラー、response.status >= 400: HTTPエラー
         self.page[key] = page
     #（Chromium 内部では非同期で読み込みが進み、locator処理時に要素が見つかるまで waitする)
