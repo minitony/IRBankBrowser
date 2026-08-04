@@ -1,6 +1,7 @@
 
 # import IRpwBB5        (キャッシュ処理インポート版)
 DELAY30 = 30        # 次回決算発表日、取得失敗のとき 30日後に設定
+bheadless = False   # True:ブラウザ非表示 False:表示
 #
 # irBB = IRpwBB2.IRBankBrowser()
 # irBB.start()      #初期化 (playwriteブラウザ起動)
@@ -34,6 +35,11 @@ from playwright.sync_api import sync_playwright, TimeoutError # py -m pip instal
 # pip installの後、Scriptsフォルダで playwright install 
 # Scriptsフォルダは py /? してpython.exeの場所を確認。そのサブフォルダである。
 
+pw_user_agent = "".join(["Mozilla/5.0 (Windows NT 10.0; Win64; x64) ",
+"AppleWebKit/537.36 (KHTML, like Gecko) ",
+"Chrome/126.0.0.0 Safari/537.36 "])#, "Edg/126.0.0.0"])
+pw_user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
+
 from PIL import Image                   # py -m pip install pillow
 from io import BytesIO
 import time
@@ -41,7 +47,6 @@ import re
 import numpy as np
 import pandas as pd                     # py -m pip install pandas
 from datetime import datetime, date, timedelta
-
 
 #########################################################################
 import win32clipboard                   # py -m pip install pywin32
@@ -98,20 +103,24 @@ class IRBankBrowser:
             print("\n\n例外発生:", exc_type, exc)        
             self.csv.set(CSV_COLNAME[CSVCN4], "")   # 決算発表日
             self.csv.set(CSV_COLNAME[CSVCN5], "")   # 次回決算発表日
-        self.cleanup()
+        self.cleanup(exc_type)
 
     # --- with なし用 ---
     def start(self):
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
-        self.context = self.browser.new_context()
+        self.browser = self.playwright.chromium.launch(headless=bheadless)
+        self.context = self.browser.new_context(user_agent=pw_user_agent,
+                                    viewport={"width": 800, "height": 400})
         print("(start)ブラウザ起動完了")
         
-    def cleanup(self):
+    def cleanup(self, exc_type=None):
         print("\n(cleanup)終了処理")
         self.csv.update_row()   # CSV 保存
         self.cache.save()       # json保存
 
+        if exc_type is not None:
+            time.sleep(5)
+            
         if self.browser:
             self.browser.close()    #contextもpaseもcloseされる
         if self.playwright:
@@ -144,7 +153,8 @@ class IRBankBrowser:
 
         self.context.close()    #自動的に全pageがclose()される
         self.page = {}
-        self.context = self.browser.new_context()
+        self.context = self.browser.new_context(user_agent=pw_user_agent,
+                                    viewport={"width": 800, "height": 400})
         
         self._stock_name = self.csv.row[ CSV_COLNAME[ CSVCN2 ] ] # 銘柄名
         print(f"  銘柄名: {self._stock_name}")
@@ -295,7 +305,13 @@ class IRBankBrowser:
             return
         # ページを開く
         page = self.context.new_page()
-        response = page.goto(self._url[key]) #, wait_until="domcontentloaded")
+        page.set_default_timeout(60000)
+        response = page.goto(self._url[key], wait_until="domcontentloaded")
+        time.sleep(1)
+        if response is None:
+            raise Exception("レスポンスなし（ネットワーク遮断 or 504 相当）")
+        elif response.status >= 400:
+            raise Exception(f"エラー{response.status} {response.url}")
     # response is None: DNSエラー、response.status >= 400: HTTPエラー
         self.page[key] = page
     #（Chromium 内部では非同期で読み込みが進み、locator処理時に要素が見つかるまで waitする)
@@ -306,6 +322,7 @@ class IRBankBrowser:
             locator.first.wait_for(timeout=timeout)
             return locator
         except TimeoutError:
+            print(f"\n(find_optional){page}:{selector} timeout({timeout})")
             return None
 
     ##########################################################################################
@@ -314,7 +331,7 @@ class IRBankBrowser:
         self.open_page(key)
 
         # <p class="pad"> の最初の <a> の text が決算発表日時
-        locator = self.find_optional(self.page[key], "p.pad a")
+        locator = self.find_optional(self.page[key], "p.pad a", 30000)
         if locator:
             return locator.inner_text().strip() # 例: "2026年2月25日 15:40"
         else:
@@ -443,7 +460,7 @@ class IRBankBrowser:
         print("(set_page)Cacheページ読込")
         if tag == "svg":    #外部URLを内部IDのみに書き換え
             html = re.sub(r'clip-path="url\(https://[^#]+#', 'clip-path="url(#', html)
-        self.page[key].set_content(html) #, wait_until="domcontentloaded")
+        self.page[key].set_content(html, wait_until="domcontentloaded")
         self.svgs = self.page[key].locator(tag)
         self.svgs.first.wait_for()
 
@@ -481,7 +498,8 @@ class IRBankBrowser:
         if not cached:                                          #キャッシュデータ無し
             print(f"(load_svgs) {self._url[key]}")
             self.open_page(key)
-            self.svgs = self.find_optional( self.page[key], tag )
+            self.svgs = self.find_optional( self.page[key], tag, 20000 )
+            # timeout 3秒だと足りなかった 319A
 
             if tag in ("svg"):
                 self.copy_graph_first("広告付き")
@@ -491,7 +509,7 @@ class IRBankBrowser:
 
             if selopt:
                 selector = tag + selopt
-                self.svgs = self.find_optional( self.page[key], selector )
+                self.svgs = self.find_optional( self.page[key], selector, 20000 )
 
     def copy_graph_specified(self, name, cond):    # condのうち１つを含む<svg>をコピーする
         if not self.svgs:
