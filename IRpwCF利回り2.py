@@ -5,8 +5,9 @@ import pandas as pd             # py -m pip install pandas
 
 #############################################################################################
 def makeCFYield(dfCF, dfV, dfD):     #CF推移と価値算定を受けて、CF利回り一覧を返す
-    #if dfCF.empty or dfV.empty:
-    #    return pd.DataFrame()
+    if dfCF.empty or dfV.empty:
+        print("\n####CF推移or価値算定のデータなし####\n\n")
+        return pd.DataFrame()
     
     df = dfCF[['単位', '営業CF']].join(dfV[['時価総額']], how='outer') #欠損も残す
     #df = df.replace('-', pd.NA).dropna()    # '-' や NaN を含む行を削除
@@ -50,7 +51,7 @@ def makeCFYield(dfCF, dfV, dfD):     #CF推移と価値算定を受けて、CF�
     df['CF利回り'] = df['営業CF'] / df['時価総額'] #CF利回り（営業CF ÷ 時価総額）
     df.drop(columns=['単位'], inplace=True)       #単位列を削除
 
-    if "配当利回り" in dfD.columns:
+    if "配当利回り" in dfD.columns and not dfV.empty:
         df = df.join( dfD[['配当利回り']], how='outer')
     return df.tail(15)
 
@@ -83,20 +84,32 @@ if __name__ == "__main__":
         return dtime(14, 30) <= now <= dtime(16, 30)
 
     def PasteGraph( off1, off2 ):   # off1行下、off2列右にPasteしてサイズ調整
-        time.sleep(0.001)
-        pythoncom.PumpWaitingMessages()     #DoEvents
-        ws.Paste(Destination=cActv.Offset( off1 + adj1, off2 + adj2))
+        success = False
+        for _ in range(10):
+            try:
+                ws.Paste(Destination=cActv.Offset( off1 + adj1, off2 + adj2))
+                success = True
+                break
+            except Exception:
+                time.sleep(0.1)
+        if not success:
+            raise Exception("貼り付け失敗")
         
-        time.sleep(0.001)
-        pythoncom.PumpWaitingMessages()     #DoEvents
         shp = ws.Shapes(ws.Shapes.Count)
         shp.ScaleHeight(0.5, True)   # 高さ 50%
         shp.ScaleWidth(0.5, True)    # 幅 50%
         shp.Left = shp.Left + 10
         shp.Top = shp.Top + 5
+        time.sleep(0.1)
 
-        time.sleep(0.001)
-        pythoncom.PumpWaitingMessages()     #DoEvents
+    def safe_set_value(cell, value, retries=10):
+        for i in range(retries):
+            try:
+                cell.Value = value
+                return
+            except Exception as e:
+                time.sleep(0.1)
+        raise e
     
 
     with IRpwBB5.IRBankBrowser() as irBB:
@@ -111,8 +124,6 @@ if __name__ == "__main__":
             #s = s.replace("\r", "").replace("\n", "")
             s = excel.ActiveCell.Text
             irBB.stock_code = s                 #銘柄コード
-            pythoncom.PumpWaitingMessages()     #DoEvents
-            time.sleep(0.001)
             
             if not irBB.stock_code: #銘柄コードでないものはパス
             #if not irBB.stock_code or not irBB.cache_cleared: #新決算情報が無い場合もパス
@@ -122,11 +133,13 @@ if __name__ == "__main__":
                 continue
 
             # URLの貼り付け
-            cActv.Offset( adj1, adj2 + 1).Value = irBB.stock_name
+            #cActv.Offset( adj1, adj2 + 1).Value = irBB.stock_name
+            safe_set_value(cActv.Offset( adj1, adj2 + 1), irBB.stock_name)
             urls = ((irBB.url_cf, 2), (irBB.url_dividend, 5), (irBB.url_value, 3),
                     (irBB.url_per, 8), (irBB.url_pl, 11))
             for url,col in urls:
-                cActv.Offset( adj1, adj2 + col).Value = url
+                #cActv.Offset( adj1, adj2 + col).Value = url
+                safe_set_value(cActv.Offset( adj1, adj2 + col), url)
             time.sleep(0.001)
             pythoncom.PumpWaitingMessages()     #DoEvents
 
@@ -134,7 +147,7 @@ if __name__ == "__main__":
             dfCF = irBB.read_cf_table()           # CF推移テーブル(/cf)を取得
             dfV  = irBB.read_value_table()        # 価値算定テーブル(/value)読込
             dfD  = irBB.read_dividend_table()     # 配当金の推移テーブル(/dividend)読込
-        
+            
             df = makeCFYield( dfCF, dfV, dfD )
             tsv = df.to_csv(sep="\t")
             tsv = tsv.replace("\r\n", "\n").replace("\r", "\n") # 改行を\n に統一
@@ -147,24 +160,23 @@ if __name__ == "__main__":
             ws.Rows(f"{row+1}:{row+i}").Insert()    # 下に挿入
         
             pyperclip.copy(tsv) #クリップボードにコピー
-            time.sleep(0.001)
+            time.sleep(0.1)
             pythoncom.PumpWaitingMessages()     #DoEvents
             ws.Paste(Destination=cActv.Offset( adj1 + 1, adj2 + 1)) #貼り付け
             
+            time.sleep(0.1)
             cStart = cActv.Offset( adj1 + 1, adj2 + 4)
             cEnd   = cActv.Offset( adj1 + i, adj2 + 4)
             rng = excel.ActiveSheet.Range(cStart, cEnd) #CF利回り列
             rng.NumberFormat = "0.00%"          # 書式 パーセント 小数2桁
 
-            # 次回決算発表日と直近決算発表日の貼り付け
-            cActv.Offset( adj1 + 1, adj2).Value = irBB.next_announcement
+            # 次回決算発表日, 直近決算発表日, 配当金CAGRの貼り付け
+            cStart = cActv.Offset( adj1 + 1, adj2)
+            cEnd   = cActv.Offset( adj1 + 3, adj2)
+            rng = excel.ActiveSheet.Range(cStart, cEnd)
+            rng.Value = [[irBB.next_announcement],[irBB.announcement],[irBB.Dividend_CAGR]]
             cActv.Offset( adj1 + 1, adj2).NumberFormat = "M/D"
-            cActv.Offset( adj1 + 2, adj2).Value = irBB.announcement
-            # 配当金CAGRの貼り付け
-            cActv.Offset( adj1 + 3, adj2).Value = irBB.Dividend_CAGR
             cActv.Offset( adj1 + 3, adj2).NumberFormat = "0.00%" 
-            pythoncom.PumpWaitingMessages()     #DoEvents
-            time.sleep(0.001)
 
             # URLにハイパーリンクを付ける
             for url,col in urls:
@@ -199,7 +211,7 @@ if __name__ == "__main__":
 
             # ループ中断するならこのタイミングで
             # Pythonメッセージ出力窓に Ctrl+C する
-            
+            irBB.stock_code = None
             for i in range(30):
                 print("-", end="")
                 time.sleep(0.1)
