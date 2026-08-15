@@ -99,7 +99,7 @@ class IRBankBrowser:
     def __exit__(self, exc_type, exc, tb):
         if exc_type is None:
             pass    # 正常終了
-        elif exc_type is KeyboardInterrupt: 
+        elif self._stock_code is None and exc_type is KeyboardInterrupt: 
             pass    # Ctrl+C
         else:
             print("\n\n例外発生:", exc_type, exc)        
@@ -141,6 +141,9 @@ class IRBankBrowser:
         #    self.cache.save()    # json保存
 
         self._stock_code = value    # 銘柄コード
+
+        if value is None:
+            return
         
         self.cache.stock_code = value
         self.csv.stock_code = value
@@ -316,7 +319,8 @@ class IRBankBrowser:
             elif response.status >= 500:
                 if bRetry500:
                     print(f"エラー{response.status} {response.url} (60秒後に再接続)")
-                    time.sleep(60)
+                    for i in range(60):
+                        time.sleep(1)
                 else:
                     raise Exception(f"エラー{response.status} {response.url}")
             elif response.status >= 400:
@@ -372,7 +376,7 @@ class IRBankBrowser:
     
     def should_skip_pl_fetch(self, next_dt):    #次回決算発表日が未来なら True
         next_date = datetime.strptime(next_dt, "%Y-%m-%d").date()
-        return next_date > date.today()
+        return next_date >= date.today()
 
     def is_next_announce_past_or_same(self, cached_next, latest):
         # cached_next が latest の日付と同じか過去なら True
@@ -591,6 +595,7 @@ class IRBankBrowser:
             row[0] = re.sub(r"/", "", row[0])   # 年度 YYYY/MM → YYYYMM
             data.append(row)
 
+
         df = pd.DataFrame(data, columns=colnames)
         df.set_index(colnames[0], inplace=True)
 
@@ -661,6 +666,8 @@ class IRBankBrowser:
             # 次の年度へ
             i += rowspan
 
+        while len(row) + 1 > len(colnames):    #544A 配当金 表がおかしい
+            colnames.append("-")
 
         return caption_text, data, colnames
 
@@ -703,9 +710,13 @@ class IRBankBrowser:
         #注) 未配当(0 / 0 = NaN)のとき 0、無配転落は -1
         
         #df["増配比率"] = df["増配比率"].replace([np.inf, -np.inf], 1)
-        df["div"] = ( pd.to_numeric(    #配当利回りの数値化 ("-"のとき 0)
+        if "配当利回り" in df.columns:
+            df["div"] = ( pd.to_numeric(    #配当利回りの数値化 ("-"のとき 0)
                     df["配当利回り"].str.replace("%", "").str.replace("-", "0"), errors="coerce"
                     ).fillna(0) / 100 )
+        else:
+            df["div"] = 0
+            
         df.loc[np.isinf(df["増配比率"]), "増配比率"] = pd.to_numeric(df["div"], errors="coerce")
         #注) 初配当の増配比率は infになっている。1だと大きいので配当利回りに置き換える。
         
