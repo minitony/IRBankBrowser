@@ -60,10 +60,23 @@ def copy_image_to_clipboard(image):         # imageをクリップボードに�
     data = output.getvalue()[14:]
     output.close()
 
-    win32clipboard.OpenClipboard()
-    win32clipboard.EmptyClipboard()
-    win32clipboard.SetClipboardData(win32con.CF_DIB, data)
-    win32clipboard.CloseClipboard()
+    # 最大10回リトライ
+    for _ in range(10):
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+            break  # 成功したら抜ける
+        except Exception:
+            # クリップボードがロックされているので少し待つ
+            time.sleep(0.05)
+        finally:
+            # OpenClipboard に成功していれば Close する
+            try:
+                win32clipboard.CloseClipboard()
+            except:
+                pass
 
     image.close()
 
@@ -102,9 +115,10 @@ class IRBankBrowser:
         elif self._stock_code is None and exc_type is KeyboardInterrupt: 
             pass    # Ctrl+C
         else:
-            print("\n\n例外発生:", exc_type, exc)        
-            self.csv.set(CSV_COLNAME[CSVCN4], "")   # 決算発表日
-            self.csv.set(CSV_COLNAME[CSVCN5], "")   # 次回決算発表日
+            print("\n\n例外発生:", exc_type, exc)
+            if self._stock_code is not None:
+                self.csv.set(CSV_COLNAME[CSVCN4], "")   # 決算発表日
+                self.csv.set(CSV_COLNAME[CSVCN5], "")   # 次回決算発表日
         self.cleanup(exc_type)
 
     # --- with なし用 ---
@@ -202,7 +216,7 @@ class IRBankBrowser:
                 self._url = self._url | {key: f"{self._url['ir']}{key}"
                     for key in ("pl", "value", "cf", "dividend")}
             
-            self.prefetch_pages()   # self._ref_list のページを並行取得
+            #self.prefetch_pages()   # self._ref_list のページを並行取得
         
     @property
     def stock_name(self):
@@ -241,7 +255,10 @@ class IRBankBrowser:
         return self.csv.get(CSV_COLNAME[CSVCN4]) 
     @property
     def Dividend_CAGR(self):    #配当金 Compound Annual Growth Rate (最大10年)
-        return self.csv.get(CSV_COLNAME[CSVCN6]) 
+        try:
+            return float(self.csv.get(CSV_COLNAME[CSVCN6]))
+        except ValueError:
+            return 0
 
     ##########################################################################################
     def get_ir_code(self, key="top") -> str:# 銘柄トップページからIRBANKコードを取得

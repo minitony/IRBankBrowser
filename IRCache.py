@@ -102,7 +102,7 @@ class CsvManager:
     # --- 値設定 ---
     def set(self, key, value):
         self.row[key] = value
-        #self.update_row()
+        #self.update_row()  #Pythonの辞書は参照渡しなので既にrowsに反映済み
 
     # --- 行検索（code_colname は optional） ---
     def _find_row(self, code_colname=None):     # キャッシュ読込
@@ -114,14 +114,13 @@ class CsvManager:
 
     # --- 行更新（row プロパティを保存） ---
     def update_row(self):                       # キャッシュ保存
-        if not self.row:
-            return
-        code_colname = self.colnames[0]
-        for r in self.rows:
-            if r.get(code_colname) == self._stock_code:
-                r.update(self.row)
-                self.save()
-                return
+        if self._stock_code is not None:
+            code_colname = self.colnames[0]
+            for r in self.rows:
+                if r.get(code_colname) == self._stock_code:
+                    r.update(self.row)
+        self.save()
+        return
 
     #def refresh_row(self):
     #    self.row = self._find_row()
