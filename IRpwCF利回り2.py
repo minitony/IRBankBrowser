@@ -1,8 +1,8 @@
 # 使い方) https://minitony.hatenablog.jp/entry/2026/04/25/164407
 # GitHub) https://github.com/minitony/IRBankBrowser
 
-#CAGR_Shikii = -999  # データ表示する閾値(他は行削除)、-999:全部表示
-CAGR_Shikii = 0.07  # データ表示する閾値(他は行削除)、-999:全部表示
+CAGR_Shikii = -999  # データ表示する閾値(他は行削除)、-999:全部表示
+#CAGR_Shikii = 0.07  # データ表示する閾値(他は行削除)、-999:全部表示
 
 import IRpwBB5
 import pandas as pd             # py -m pip install pandas
