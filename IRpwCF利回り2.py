@@ -70,9 +70,9 @@ if __name__ == "__main__":
 
     import win32com.client as win32
     import win32gui
-    #import keyboard     #py -m pip install keyboard
+    import keyboard     #py -m pip install keyboard
     paused = False
-    #python_hwnd = win32gui.GetForegroundWindow()  # 起動直後に取得しておく
+    python_hwnd = win32gui.GetForegroundWindow()  # 起動直後に取得しておく
     
     win32.gencache.EnsureDispatch("Excel.Application")  # 型ライブラリをロード
     # AttributeError: module 'win32com.gen_py.00020813-0000-0000-C000-000000000046x0x1x8'
@@ -238,16 +238,16 @@ if __name__ == "__main__":
 
             # ループ中断するならこのタイミングで
             # Pythonメッセージ出力窓に Ctrl+C する
+            # 一時停止は s (再開も s)
             irBB.stock_code = None
             i = 0
             while i < 30:
-                #作ったときは機能したけど、効きが悪いから無しにする ⇒ 一時停止は s (再開も s)
-                #if win32gui.GetForegroundWindow() == python_hwnd and \
-                #        keyboard.is_pressed('s'):
-                #    if not paused or not excel_is_editing(excel):
-                #        # Excelが編集モードのときは(エラー発生するから)再開しない
-                #        paused = not paused
-                #        print("|", end="")
+                if win32gui.GetForegroundWindow() == python_hwnd and \
+                        keyboard.is_pressed('s'):
+                    if not paused or not excel_is_editing(excel):
+                        # Excelが編集モードのときは(エラー発生するから)再開しない
+                        paused = not paused
+                        print("|", end="")
 
                 if paused:
                     pass
