@@ -482,6 +482,16 @@ class IRBankBrowser:
         """)
         print(f"(remove_ads)広告を削除しました({key})")
 
+    def has_ads(self, key):                     # 広告が表示されているならTrue
+        page = self.page[key]
+        exists = page.evaluate("""
+            () => {
+                return [...document.querySelectorAll('*')]
+                    .some(el => getComputedStyle(el).position === 'fixed');
+            }
+        """)
+        return exists
+
     def set_page(self, html, tag):              #HTMLをplaywriteブラウザに読み込む
         key = "html"
         if self.page.get(key):
@@ -530,18 +540,23 @@ class IRBankBrowser:
         if not cached:                                          #キャッシュデータ無し
             print(f"(load_svgs) {self._url[key]}")
             self.open_page(key)
+            
+            if tag in ("svg"):
+                while not self.has_ads(key):
+                    time.sleep(0.1)
+                #self.copy_graph_first("広告付き")
+                self.remove_ads(key)           #広告削除
+                #分からないけど広告消さないとsvg認識できない
+                
             self.svgs = self.find_optional( self.page[key], tag, 20000 )
             # timeout 3秒だと足りなかった 319A
-
-            if tag in ("svg"):
-                self.copy_graph_first("広告付き")
-                self.remove_ads(key)           #広告削除
 
             self.cache_set_svgs(key2)       # svgsを Cache保存
 
             if selopt:
                 selector = tag + selopt
                 self.svgs = self.find_optional( self.page[key], selector, 20000 )
+                
 
     def copy_graph_specified(self, name, cond):    # condのうち１つを含む<svg>をコピーする
         if not self.svgs:
