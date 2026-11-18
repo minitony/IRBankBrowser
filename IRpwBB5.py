@@ -544,12 +544,17 @@ class IRBankBrowser:
             if tag in ("svg"):
                 while not self.has_ads(key):
                     time.sleep(0.1)
-                #self.copy_graph_first("広告付き")
                 self.remove_ads(key)           #広告削除
                 #分からないけど広告消さないとsvg認識できない
                 
             self.svgs = self.find_optional( self.page[key], tag, 20000 )
             # timeout 3秒だと足りなかった 319A
+            if tag in ("svg"):
+                while self.has_ads(key):
+                    self.copy_graph_first("広告付き")
+                    self.remove_ads(key)           #広告削除
+                    self.svgs = self.find_optional( self.page[key], tag, 20000 )
+                    time.sleep(1)
 
             self.cache_set_svgs(key2)       # svgsを Cache保存
 
